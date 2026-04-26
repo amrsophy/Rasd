@@ -1,0 +1,103 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: players
+    // Fields:
+    //   - name: string (required, < 100 chars)
+    //   - birthDate: string (required, < 20 chars)
+    //   - estimatedAge: number (required, > 0)
+    //   - confidence: number (required, 0-100)
+    //   - matchStatus: string (required, enum: ['match', 'suspicious', 'mismatch'])
+    //   - photoUrl: string (optional, < 2000 chars)
+    //   - certificateUrl: string (optional, < 2000 chars)
+    //   - reasoning: string (optional, < 5000 chars)
+    //   - verifiedAt: timestamp (required)
+    //   - createdBy: string (required, matches auth.uid)
+    //
+    // Collection: users
+    // Fields:
+    //   - displayName: string (optional)
+    //   - email: string (required)
+    //   - photoURL: string (optional)
+    //   - role: string (required, enum: ['admin', 'user'])
+    //
+    // Collection: auditLogs
+    // Fields:
+    //   - action: string (required)
+    //   - details: string (optional)
+    //   - performedBy: string (required, matches auth.uid)
+    //   - performedByName: string (optional)
+    //   - timestamp: timestamp (required)
+    //   - targetId: string (optional)
+    //   - targetName: string (optional)
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.createdBy;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "amr.sophy@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidPlayer(data) {
+      return data.keys().hasAll(['name', 'birthDate', 'matchStatus', 'createdBy', 'verifiedAt']) &&
+             data.name is string && data.name.size() < 100 &&
+             data.birthDate is string && data.birthDate.size() < 20 &&
+             data.matchStatus in ['match', 'suspicious', 'mismatch'] &&
+             data.createdBy == request.auth.uid &&
+             data.verifiedAt is timestamp;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role']) &&
+             data.email is string &&
+             data.role in ['admin', 'user'];
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['action', 'performedBy', 'timestamp']) &&
+             data.action is string && data.action.size() < 200 &&
+             data.performedBy == request.auth.uid &&
+             data.timestamp is timestamp;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (isOwner(userId) && request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (isOwner(userId) && request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /players/{playerId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPlayer(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && isValidAuditLog(request.resource.data);
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}

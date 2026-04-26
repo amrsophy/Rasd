@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "Player": {
+      "title": "Player",
+      "description": "A verified player record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the player" },
+        "birthDate": { "type": "string", "description": "Birth date from certificate" },
+        "estimatedAge": { "type": "number", "description": "AI estimated age" },
+        "confidence": { "type": "number", "description": "Confidence score" },
+        "matchStatus": { "type": "string", "enum": ["match", "suspicious", "mismatch"] },
+        "photoUrl": { "type": "string", "description": "URL to player photo" },
+        "certificateUrl": { "type": "string", "description": "URL to birth certificate" },
+        "reasoning": { "type": "string", "description": "AI reasoning for the result" },
+        "governorate": { "type": "string", "description": "Governorate of the player" },
+        "sport": { "type": "string", "description": "Sport practiced by the player" },
+        "club": { "type": "string", "description": "Club the player belongs to" },
+        "verifiedAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string", "description": "UID of the user who verified" }
+      },
+      "required": ["name", "birthDate", "matchStatus", "createdBy"]
+    },
+    "User": {
+      "title": "User",
+      "description": "System user profile",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["email"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "A record of an administrative action",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "description": "The action performed" },
+        "details": { "type": "string", "description": "Details of the action" },
+        "performedBy": { "type": "string", "description": "UID of the user who performed the action" },
+        "performedByName": { "type": "string", "description": "Name of the user who performed the action" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "targetId": { "type": "string", "description": "ID of the target entity (e.g., player ID)" },
+        "targetName": { "type": "string", "description": "Name of the target entity" }
+      },
+      "required": ["action", "performedBy", "timestamp"]
+    }
+  },
+  "firestore": {
+    "players": {
+      "schema": "Player",
+      "description": "Collection of verified players"
+    },
+    "users": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "auditLogs": {
+      "schema": "AuditLog",
+      "description": "Collection of administrative audit logs"
+    }
+  }
+}
