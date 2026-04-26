@@ -48,9 +48,14 @@ import {
   signInWithPopup, 
   signOut, 
   onAuthStateChanged, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   collection, 
   addDoc, 
   query, 
+  where,
+  getDocs,
   onSnapshot, 
   orderBy, 
   Timestamp,
@@ -175,7 +180,13 @@ export default function App() {
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [authMode, setAuthMode] = useState<'google' | 'local'>('google');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [localEmail, setLocalEmail] = useState('');
+  const [localPassword, setLocalPassword] = useState('');
+  const [localName, setLocalName] = useState('');
 
   // Form state
   const [photo, setPhoto] = useState<string | null>(null);
@@ -194,6 +205,7 @@ export default function App() {
   const [playerToDelete, setPlayerToDelete] = useState<string | null>(null);
   const [isProcessingFile, setIsProcessingFile] = useState<{ photo: boolean; certificate: boolean }>({ photo: false, certificate: false });
   const [showAddPlayerModal, setShowAddPlayerModal] = useState(false);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [newPlayer, setNewPlayer] = useState({
     name: '',
     birthDate: '',
@@ -203,6 +215,9 @@ export default function App() {
     photoUrl: 'https://picsum.photos/seed/player/200/200' // Default placeholder for manual entry
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'user' | 'admin'>('user');
 
   // Test Connection
   useEffect(() => {
@@ -222,32 +237,59 @@ export default function App() {
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      console.log("Auth state changed:", currentUser?.email);
       try {
         setUser(currentUser);
         if (currentUser) {
+          setError(null); // Clear errors on successful login
           // Sync user to Firestore
           const userRef = doc(db, 'users', currentUser.uid);
           let userSnap;
           try {
             userSnap = await getDoc(userRef);
           } catch (err) {
-            handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
+            console.error("Failed to get user doc:", err);
+            // Fallback: If we can't get the doc, we might still be admin by email
+            if (currentUser.email === 'amr.sophy@gmail.com') setIsAdmin(true);
             return;
           }
           
           if (!userSnap.exists()) {
-            try {
+            // Check if user was pre-created by email
+            const usersRef = collection(db, 'users');
+            const q = query(usersRef, where('email', '==', currentUser.email));
+            const querySnap = await getDocs(q);
+            
+            if (!querySnap.empty) {
+              const existingDoc = querySnap.docs[0];
+              const existingData = existingDoc.data();
+              
               await setDoc(userRef, {
-                email: currentUser.email,
-                displayName: currentUser.displayName,
-                photoURL: currentUser.photoURL,
-                role: currentUser.email === 'amr.sophy@gmail.com' ? 'admin' : 'user',
-                createdAt: serverTimestamp()
+                ...existingData,
+                displayName: currentUser.displayName || existingData.displayName,
+                photoURL: currentUser.photoURL || existingData.photoURL,
+                updatedAt: serverTimestamp()
               });
-            } catch (err) {
-              handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}`);
+              
+              if (existingDoc.id !== currentUser.uid) {
+                await deleteDoc(doc(db, 'users', existingDoc.id));
+              }
+              
+              setIsAdmin(existingData.role === 'admin');
+            } else {
+              try {
+                await setDoc(userRef, {
+                  email: currentUser.email,
+                  displayName: currentUser.displayName,
+                  photoURL: currentUser.photoURL,
+                  role: currentUser.email === 'amr.sophy@gmail.com' ? 'admin' : 'user',
+                  createdAt: serverTimestamp()
+                });
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}`);
+              }
+              if (currentUser.email === 'amr.sophy@gmail.com') setIsAdmin(true);
             }
-            if (currentUser.email === 'amr.sophy@gmail.com') setIsAdmin(true);
           } else {
             const userData = userSnap.data();
             setIsAdmin(userData.role === 'admin');
@@ -329,11 +371,54 @@ export default function App() {
   }, [user]);
 
   const handleLogin = async () => {
+    setIsLoggingIn(true);
+    setError(null);
     try {
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, googleProvider);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login error:", err);
-      setError(t('errorLoginFailed'));
+      if (err.code === 'auth/popup-closed-by-user') {
+        // Just ignore
+      } else {
+        setError(t('errorLoginFailed'));
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLocalAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!localEmail || !localPassword) return;
+    if (isSignUp && !localName) return;
+
+    setIsLoggingIn(true);
+    setError(null);
+    try {
+      if (isSignUp) {
+        const userCredential = await createUserWithEmailAndPassword(auth, localEmail, localPassword);
+        await updateProfile(userCredential.user, { displayName: localName });
+        // Force sync
+        setUser({ ...userCredential.user, displayName: localName } as User);
+      } else {
+        await signInWithEmailAndPassword(auth, localEmail, localPassword);
+      }
+    } catch (err: any) {
+      console.error("Local auth error:", err);
+      let errorMsg = t('errorLoginFailed');
+      if (err.code === 'auth/email-already-in-use') {
+        errorMsg = language === 'ar' ? 'البريد الإلكتروني مستخدم بالفعل' : 'Email already in use';
+      } else if (err.code === 'auth/weak-password') {
+        errorMsg = language === 'ar' ? 'كلمة المرور ضعيفة جداً' : 'Password is too weak';
+      } else if (err.code === 'auth/invalid-credential') {
+        errorMsg = language === 'ar' ? 'بيانات الاعتماد غير صالحة' : 'Invalid credentials';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMsg = language === 'ar' ? 'يجب تفعيل خيار الدخول بالبريد الإلكتروني من لوحة تحكم Firebase' : 'Email/Password auth is not enabled in Firebase';
+      }
+      setError(errorMsg);
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -763,6 +848,45 @@ export default function App() {
     }
   };
 
+  const handleAddUser = async () => {
+    if (!newUserEmail.trim()) {
+      setError(t('userEmail') + ' ' + (language === 'ar' ? 'مطلوب' : 'is required'));
+      return;
+    }
+
+    if (!newUserEmail.includes('@')) {
+      setError(t('errorEmailInvalid'));
+      return;
+    }
+
+    setIsVerifying(true);
+    try {
+      const userRef = await addDoc(collection(db, 'users'), {
+        email: newUserEmail.trim(),
+        displayName: newUserName.trim() || null,
+        role: newUserRole,
+        createdAt: serverTimestamp(),
+        manual: true
+      });
+
+      await logAction(
+        t('addUser'),
+        `${t('addUser')} ${newUserEmail} (${newUserRole})`,
+        userRef.id,
+        newUserEmail
+      );
+
+      setShowAddUserModal(false);
+      setNewUserEmail('');
+      setNewUserName('');
+      setNewUserRole('user');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'users');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   const resetForm = () => {
     setPhoto(null);
     setCertificate(null);
@@ -801,13 +925,132 @@ export default function App() {
               {t('appDescription')}
             </p>
           </div>
-          <button 
-            onClick={handleLogin}
-            className="w-full py-4 bg-white border-2 border-slate-100 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-slate-50 hover:border-blue-200 transition-all group"
-          >
-            <LogIn className="w-5 h-5 text-blue-600 group-hover:scale-110 transition-transform" />
-            {t('loginWithGoogle')}
-          </button>
+
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-bold flex items-center gap-3"
+            >
+              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+              <span>{error}</span>
+              <button onClick={() => setError(null)} className="mr-auto text-red-400 hover:text-red-500">
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          )}
+
+          <div className="flex bg-slate-100 p-1 rounded-2xl mb-4">
+            <button
+              onClick={() => setAuthMode('google')}
+              className={cn(
+                "flex-1 py-2 rounded-xl text-sm font-bold transition-all",
+                authMode === 'google' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500"
+              )}
+            >
+              {t('loginGoogle')}
+            </button>
+            <button
+              onClick={() => setAuthMode('local')}
+              className={cn(
+                "flex-1 py-2 rounded-xl text-sm font-bold transition-all",
+                authMode === 'local' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500"
+              )}
+            >
+              {t('loginLocal')}
+            </button>
+          </div>
+
+          <AnimatePresence mode="wait">
+            {authMode === 'google' ? (
+              <motion.div
+                key="google"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+              >
+                <button 
+                  onClick={handleLogin}
+                  disabled={isLoggingIn}
+                  className="w-full py-4 bg-white border-2 border-slate-200 rounded-2xl font-extrabold text-slate-800 flex items-center justify-center gap-3 hover:bg-slate-50 hover:border-blue-300 transition-all group disabled:opacity-50"
+                >
+                  {isLoggingIn ? (
+                    <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                  ) : (
+                    <LogIn className="w-5 h-5 text-blue-600 group-hover:scale-110 transition-transform" />
+                  )}
+                  {t('loginWithGoogle')}
+                </button>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="local"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-4"
+              >
+                <form onSubmit={handleLocalAuth} className="space-y-4">
+                  {isSignUp && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1 px-2">{t('userName')}</label>
+                      <input
+                        type="text"
+                        required
+                        value={localName}
+                        onChange={(e) => setLocalName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-right"
+                        placeholder={language === 'ar' ? 'أدخل اسمك بالكامل' : 'Enter your full name'}
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1 px-2">{t('email')}</label>
+                    <input
+                      type="email"
+                      required
+                      value={localEmail}
+                      onChange={(e) => setLocalEmail(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-right"
+                      placeholder="email@example.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1 px-2">{t('password')}</label>
+                    <input
+                      type="password"
+                      required
+                      value={localPassword}
+                      onChange={(e) => setLocalPassword(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-right"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <button 
+                    type="submit"
+                    disabled={isLoggingIn}
+                    className="w-full py-4 bg-blue-600 text-white rounded-2xl font-extrabold flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                  >
+                    {isLoggingIn ? (
+                      <Loader2 className="w-5 h-5 text-white animate-spin" />
+                    ) : (
+                      <LogIn className="w-5 h-5 text-white" />
+                    )}
+                    {isSignUp ? t('signup') : t('login')}
+                  </button>
+                </form>
+                
+                <div className="text-center">
+                  <button
+                    onClick={() => setIsSignUp(!isSignUp)}
+                    className="text-sm font-bold text-blue-600 hover:underline"
+                  >
+                    {isSignUp ? t('hasAccount') : t('noAccount')} {isSignUp ? t('login') : t('createAccount')}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <p className="text-xs text-slate-400">
             {t('privacyPolicy')}
           </p>
@@ -836,7 +1079,10 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="font-bold text-xl tracking-tight"
             >
-              {t('appName').split(' ')[1]} {t('appName').split(' ')[2]}
+              {t('appName').split(' ').length > 2 
+                ? `${t('appName').split(' ')[1]} ${t('appName').split(' ')[2]}`
+                : t('appName')
+              }
             </motion.span>
           )}
         </div>
@@ -909,6 +1155,19 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            {error && !loading && user && (
+              <motion.div 
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="hidden lg:flex items-center gap-3 bg-red-50 text-red-600 px-4 py-2 rounded-xl text-xs font-bold border border-red-100"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span>{error}</span>
+                <button onClick={() => setError(null)} className="hover:text-red-800">
+                  <X className="w-3 h-3" />
+                </button>
+              </motion.div>
+            )}
             <div className="relative">
               <Search className={cn("w-5 h-5 text-slate-400 absolute top-1/2 -translate-y-1/2", language === 'ar' ? "right-3" : "left-3")} />
               <input 
@@ -929,7 +1188,7 @@ export default function App() {
                 <p className="text-xs font-bold text-slate-800">{user.displayName}</p>
                 <button onClick={handleLogout} className="text-[10px] text-red-500 hover:underline">{t('logout')}</button>
               </div>
-              <img src={user.photoURL || ''} className="w-10 h-10 rounded-full border-2 border-blue-200" alt="Profile" />
+              <img src={user.photoURL || undefined} className="w-10 h-10 rounded-full border-2 border-blue-200" alt="Profile" />
             </div>
           </div>
         </header>
@@ -964,7 +1223,7 @@ export default function App() {
                       {players.slice(0, 5).map((player, idx) => (
                         <div key={player.id || `recent-${idx}`} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                           <div className="flex items-center gap-4">
-                            <img src={player.photoUrl} alt={player.name} className="w-12 h-12 rounded-xl object-cover" />
+                            <img src={player.photoUrl || undefined} alt={player.name} className="w-12 h-12 rounded-xl object-cover" />
                             <div>
                               <p className="font-bold text-slate-800">{player.name}</p>
                               <p className="text-xs text-slate-500">{new Date(player.verifiedAt).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US')}</p>
@@ -1210,7 +1469,7 @@ export default function App() {
                         <div className="flex flex-col gap-4">
                           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 flex-1 flex flex-col items-center justify-center text-center">
                             <div className="w-32 h-32 rounded-full border-4 border-white shadow-md overflow-hidden mb-4">
-                              <img src={photo || ''} alt="Verified" className="w-full h-full object-cover" />
+                              <img src={photo || undefined} alt="Verified" className="w-full h-full object-cover" />
                             </div>
                             <p className="text-sm font-bold text-slate-700">{t('playerPhoto')}</p>
                           </div>
@@ -1281,7 +1540,7 @@ export default function App() {
                           <tr key={player.id || `player-${idx}`} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
-                                <img src={player.photoUrl} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                                <img src={player.photoUrl || undefined} alt="" className="w-10 h-10 rounded-lg object-cover" />
                                 <span className="font-bold text-slate-800">{player.name}</span>
                               </div>
                             </td>
@@ -1336,9 +1595,18 @@ export default function App() {
                 className="space-y-6"
               >
                 <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
-                  <div className="p-6 border-b border-slate-100">
-                    <h3 className="font-bold text-lg">{t('adminUserManagement')}</h3>
-                    <p className="text-slate-500 text-sm">{t('adminUserManagementDesc')}</p>
+                  <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-lg">{t('adminUserManagement')}</h3>
+                      <p className="text-slate-500 text-sm">{t('adminUserManagementDesc')}</p>
+                    </div>
+                    <button 
+                      onClick={() => setShowAddUserModal(true)}
+                      className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-colors flex items-center gap-2"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      {t('addUser')}
+                    </button>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-right">
@@ -1355,7 +1623,7 @@ export default function App() {
                           <tr key={u.id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
-                                <img src={u.photoURL || ''} alt="" className="w-8 h-8 rounded-full border border-slate-200" />
+                                <img src={u.photoURL || undefined} alt="" className="w-8 h-8 rounded-full border border-slate-200" />
                                 <span className="font-bold text-slate-800">{u.displayName || (language === 'ar' ? 'بدون اسم' : 'No Name')}</span>
                               </div>
                             </td>
@@ -1570,6 +1838,103 @@ export default function App() {
           </div>
         )}
 
+        {/* Add User Modal */}
+        {showAddUserModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden text-right"
+            >
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+                <button 
+                  onClick={() => setShowAddUserModal(false)}
+                  className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors order-first"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                    <UserPlus className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-900">{t('addUser')}</h3>
+                    <p className="text-sm text-slate-500">{t('addUserDesc')}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 space-y-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">{t('userName')}</label>
+                  <input
+                    type="text"
+                    value={newUserName}
+                    onChange={(e) => setNewUserName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-right"
+                    placeholder={language === 'ar' ? 'أدخل اسم المستخدم' : 'Enter user name'}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">{t('userEmail')}</label>
+                  <input
+                    type="email"
+                    value={newUserEmail}
+                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-right"
+                    placeholder="email@example.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">{t('userRole')}</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      onClick={() => setNewUserRole('user')}
+                      className={cn(
+                        "p-4 rounded-2xl border-2 transition-all font-bold text-center",
+                        newUserRole === 'user' 
+                          ? "border-blue-600 bg-blue-50 text-blue-600" 
+                          : "border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200"
+                      )}
+                    >
+                      {t('roleUser')}
+                    </button>
+                    <button
+                      onClick={() => setNewUserRole('admin')}
+                      className={cn(
+                        "p-4 rounded-2xl border-2 transition-all font-bold text-center",
+                        newUserRole === 'admin' 
+                          ? "border-purple-600 bg-purple-50 text-purple-600" 
+                          : "border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200"
+                      )}
+                    >
+                      {t('roleAdmin')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 bg-slate-50 border-t border-slate-100 flex flex-row-reverse gap-4">
+                <button 
+                  onClick={handleAddUser}
+                  disabled={isVerifying}
+                  className="flex-1 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold transition-all shadow-lg shadow-blue-200 disabled:opacity-50"
+                >
+                  {isVerifying ? t('processing') : t('addUserButton')}
+                </button>
+                <button 
+                  onClick={() => setShowAddUserModal(false)}
+                  className="flex-1 py-4 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-2xl font-bold transition-all"
+                >
+                  {t('cancel')}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {showAddPlayerModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm overflow-y-auto">
             <motion.div
@@ -1604,7 +1969,7 @@ export default function App() {
                     {isProcessingFile.photo ? (
                       <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                     ) : (
-                      <img src={newPlayer.photoUrl} alt="Player" className="w-full h-full object-cover" />
+                      <img src={newPlayer.photoUrl || undefined} alt="Player" className="w-full h-full object-cover" />
                     )}
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <Camera className="w-6 h-6 text-white" />
@@ -1884,7 +2249,7 @@ function FileUpload({
         </div>
       ) : preview ? (
         <div className="relative w-full h-full group">
-          <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+          <img src={preview || undefined} alt="Preview" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <p className="text-white font-bold flex items-center gap-2"><Upload className="w-5 h-5" /> {t('changePhoto')}</p>
           </div>
@@ -1892,7 +2257,7 @@ function FileUpload({
       ) : (
         <div className="text-center p-6">
           <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-            {React.cloneElement(icon as React.ReactElement, { className: "w-8 h-8 text-blue-500" })}
+            {React.cloneElement(icon as React.ReactElement<any>, { className: "w-8 h-8 text-blue-500" })}
           </div>
           <p className="text-sm font-bold text-slate-700">{label}</p>
         </div>

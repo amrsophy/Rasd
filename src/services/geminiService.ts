@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Type, ThinkingLevel } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -16,24 +16,33 @@ export async function verifyPlayer(
   playerPhotoBase64: string,
   language: "ar" | "en" = "ar"
 ): Promise<VerificationResult> {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-3.1-pro-preview";
 
   const prompt = `
-    You are an expert in age verification for youth sports. 
-    Analyze the provided birth certificate (OCR) and the player's photo (biological age estimation).
+    You are an AI specialized in forensic document analysis and biological age estimation for youth sports.
     
-    1. Extract the player's full name and birth date from the birth certificate.
-    2. Estimate the biological age of the player from the photo.
-    3. Compare the paper age (from the certificate) with the estimated biological age.
-    4. Provide a confidence score (0-100).
-    5. Determine the match status:
-       - "match": The ages are consistent.
-       - "suspicious": There is a noticeable discrepancy (e.g., 2-3 years).
-       - "mismatch": There is a significant discrepancy (e.g., >3 years) or signs of tampering.
-    6. Provide a detailed reasoning in ${language === 'ar' ? 'Arabic' : 'English'}.
-    
-    Return the result in JSON format with the following keys:
-    playerName, birthDate, estimatedAge, confidence, matchStatus, reasoning.
+    TASK 1: BIRTH CERTIFICATE OCR
+    Carefully examine the first image (Birth Certificate).
+    - Extract the FULL LEGAL NAME of the child. Be precise with characters (especially in Arabic).
+    - Extract the DATE OF BIRTH. Pay attention to both the numerical format and any written-out dates.
+    - Look for signs of tampering, inconsistent fonts, or overlapping text around the name and date.
+    - If the document is in Arabic, use your advanced knowledge of official certificate layouts (e.g., Egyptian or regional birth certificates).
+
+    TASK 2: BIOLOGICAL AGE ESTIMATION 
+    Carefully examine the second image (Player Photo).
+    - Estimate the biological age based on facial features, bone structure (if visible), and overall physical development.
+    - Consider the context of a "youth" player.
+
+    TASK 3: COMPARISON AND ANALYSIS
+    - Compare the birth year from the certificate with your biological age estimate.
+    - Calculate the absolute difference.
+    - Assign a match status:
+        - "match": Consistent biological age (difference <= 1.5 years).
+        - "suspicious": Notable discrepancy (difference between 2 and 3 years).
+        - "mismatch": Significant discrepancy (difference > 3 years) or obvious document tampering.
+
+    REASONING:
+    Explain your findings clearly in ${language === 'ar' ? 'Arabic' : 'English'}. Mention specific details observed in both the document and the photo.
   `;
 
   const parts = [
@@ -58,11 +67,31 @@ export async function verifyPlayer(
       contents: { parts },
       config: {
         responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            playerName: { type: Type.STRING, description: "The full name of the player extracted from the certificate." },
+            birthDate: { type: Type.STRING, description: "The date of birth in YYYY-MM-DD format." },
+            estimatedAge: { type: Type.NUMBER, description: "The estimated biological age in years." },
+            confidence: { type: Type.NUMBER, description: "Confidence score from 0 to 100." },
+            matchStatus: { 
+              type: Type.STRING, 
+              enum: ["match", "suspicious", "mismatch"],
+              description: "The result of comparing the certificate to the photo."
+            },
+            reasoning: { type: Type.STRING, description: "Detailed explanation of the analysis." }
+          },
+          required: ["playerName", "birthDate", "estimatedAge", "confidence", "matchStatus", "reasoning"]
+        },
+        temperature: 0,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
       },
     });
 
-    const result = JSON.parse(response.text || "{}");
-    return result as VerificationResult;
+    const text = response.text;
+    if (!text) throw new Error("EMPTY_RESPONSE");
+    
+    return JSON.parse(text) as VerificationResult;
   } catch (error: any) {
     console.error("Error in verifyPlayer:", error);
     

@@ -79,11 +79,13 @@ service cloud.firestore {
 
     // Rules
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin() || (isAuthenticated() && resource.data.email == request.auth.token.email);
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
                     (isOwner(userId) && request.resource.data.role == 'user' || isAdmin());
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
                     (isOwner(userId) && request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
     }
 
     match /players/{playerId} {
