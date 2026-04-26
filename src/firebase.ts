@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, getDocs, onSnapshot, orderBy, Timestamp, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 
 // @ts-ignore
@@ -11,27 +11,5 @@ export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const googleProvider = new GoogleAuthProvider();
 
-export { 
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  updateProfile,
-  collection, 
-  addDoc, 
-  query, 
-  where, 
-  getDocs, 
-  onSnapshot, 
-  orderBy, 
-  Timestamp, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  serverTimestamp, 
-  getDocFromServer 
-};
+export { signInWithPopup, signOut, onAuthStateChanged, collection, addDoc, query, where, getDocs, onSnapshot, orderBy, Timestamp, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, getDocFromServer };
 export type { User };

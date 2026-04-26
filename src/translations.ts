@@ -153,16 +153,7 @@ export const translations = {
     errorEmailInvalid: "البريد الإلكتروني غير صالح.",
     language: "اللغة",
     arabic: "العربية",
-    english: "English",
-    loginLocal: "دخول بحساب محلي",
-    loginGoogle: "دخول عبر جوجل",
-    email: "البريد الإلكتروني",
-    password: "كلمة المرور",
-    noAccount: "ليس لديك حساب؟",
-    hasAccount: "لديك حساب بالفعل؟",
-    createAccount: "إنشاء حساب جديد",
-    login: "تسجيل الدخول",
-    signup: "إنشاء حساب"
+    english: "English"
   },
   en: {
     appName: "Rasd Smart Platform",
@@ -318,16 +309,7 @@ export const translations = {
     errorEmailInvalid: "Invalid email address.",
     language: "Language",
     arabic: "العربية",
-    english: "English",
-    loginLocal: "Login with Local Account",
-    loginGoogle: "Login with Google",
-    email: "Email Address",
-    password: "Password",
-    noAccount: "Don't have an account?",
-    hasAccount: "Already have an account?",
-    createAccount: "Create New Account",
-    login: "Login",
-    signup: "Sign Up"
+    english: "English"
   }
 };
 
